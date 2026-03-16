@@ -16,7 +16,7 @@ permissions:
 env:
   PROJECT_ID: ${{ vars.PROJECT_ID }}
   REGION: ${{ vars.REGION }}
-  FUNCTION_NAME: extractor-per-listing-v2
+  FUNCTION_NAME: extractor-per-listing
   FUNCTION_DIR: cloud_function/extractor-per-listing-v2
   ENTRY_POINT: extract_http
   RUNTIME: python312
