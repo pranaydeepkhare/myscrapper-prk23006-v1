@@ -5,7 +5,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'cloud_function/extractor-per-listing/**'
+      - 'cloud_function/extractor-per-listing-v2/**'
       - '.github/workflows/deploy-extractor.yml'
   workflow_dispatch: {}
 
@@ -16,8 +16,8 @@ permissions:
 env:
   PROJECT_ID: ${{ vars.PROJECT_ID }}
   REGION: ${{ vars.REGION }}
-  FUNCTION_NAME: extractor-per-listing
-  FUNCTION_DIR: cloud_function/extractor-per-listing
+  FUNCTION_NAME: extractor-per-listing-v2
+  FUNCTION_DIR: cloud_function/extractor-per-listing-v2
   ENTRY_POINT: extract_http
   RUNTIME: python312
   BUCKET_NAME: ${{ vars.BUCKET_NAME }}
