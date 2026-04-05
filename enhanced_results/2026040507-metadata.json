@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-04-05T07:11:33.388785+00:00",
+  "model_type": "random_forest",
+  "best_params": {
+    "n_estimators": 130,
+    "max_depth": 15,
+    "min_samples_split": 11,
+    "min_samples_leaf": 3,
+    "max_features": null
+  },
+  "n_trials": 20,
+  "features_used": [
+    "make",
+    "model",
+    "transmission",
+    "color",
+    "city",
+    "state",
+    "year_num",
+    "mileage_num"
+  ],
+  "n_features": 8,
+  "train_rows": 216,
+  "val_rows": 55,
+  "test_rows": 93,
+  "test_metrics": {
+    "mae": 5931.926174165355,
+    "rmse": 14760.210770002166,
+    "mape": 70.27800456897204,
+    "bias": 278.2846429594109,
+    "n_samples": 89
+  },
+  "top_5_features": [
+    "year_num",
+    "mileage_num",
+    "city",
+    "color",
+    "make"
+  ]
+}
