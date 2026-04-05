@@ -1,0 +1,124 @@
+name: Sync Enhanced Model Outputs to Repo
+# Location: .github/workflows/sync-enhanced-outputs.yml
+
+run-name: Syncing enhanced predictions, importance & PDPs for ${{ github.ref_name }}
+
+on:
+  schedule:
+    - cron: '50 * * * *' # Every hour at 50 minutes past
+  workflow_dispatch: 
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  PROJECT_ID: ${{ vars.PROJECT_ID }}
+  BUCKET_NAME: ${{ vars.BUCKET_NAME }}
+  WORKLOAD_IDENTITY_PROVIDER: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+  DEPLOYER_SA: ${{ vars.DEPLOYER_SA }}
+  GCS_PREFIX: "enhanced_results"
+  OUTPUT_DIR: "enhanced_results"
+  # FIX for Node.js deprecation warning
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  sync_enhanced_outputs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auth (WIF) and Setup gcloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+      
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Download Latest Enhanced Outputs
+        id: download
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          # Find the LATEST folder/run_id in GCS
+          LATEST_RUN_DIR=$(gsutil ls -d gs://${BUCKET_NAME}/${GCS_PREFIX}/*/ 2>/dev/null | grep -E '/[0-9]{10}/' | tail -1 || echo "")
+          
+          if [ -z "$LATEST_RUN_DIR" ]; then
+            echo "No enhanced results found yet"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          
+          # Extract the timestamp (folder name, e.g., 2026030723)
+          LATEST_RUN_ID=$(echo "$LATEST_RUN_DIR" | sed -E "s|gs://${BUCKET_NAME}/${GCS_PREFIX}/||; s|/||")
+          echo "run_id=$LATEST_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          
+          echo "Detected latest run ID: $LATEST_RUN_ID"
+          
+          # Create local folder
+          mkdir -p ${{ env.OUTPUT_DIR }}
+          
+          # Download all outputs for this run
+          # 1. Predictions
+          if gsutil ls gs://${BUCKET_NAME}/${GCS_PREFIX}/${LATEST_RUN_ID}-preds.csv 2>/dev/null; then
+            gsutil cp gs://${BUCKET_NAME}/${GCS_PREFIX}/${LATEST_RUN_ID}-preds.csv \
+              ${{ env.OUTPUT_DIR }}/${LATEST_RUN_ID}-preds.csv
+            echo "✅ Downloaded predictions"
+          fi
+          
+          # 2. Importance
+          if gsutil ls gs://${BUCKET_NAME}/${GCS_PREFIX}/${LATEST_RUN_ID}-importance.csv 2>/dev/null; then
+            gsutil cp gs://${BUCKET_NAME}/${GCS_PREFIX}/${LATEST_RUN_ID}-importance.csv \
+              ${{ env.OUTPUT_DIR }}/${LATEST_RUN_ID}-importance.csv
+            echo "✅ Downloaded importance"
+          fi
+          
+          # 3. PDP plot
+          if gsutil ls gs://${BUCKET_NAME}/${GCS_PREFIX}/${LATEST_RUN_ID}-pdp.png 2>/dev/null; then
+            gsutil cp gs://${BUCKET_NAME}/${GCS_PREFIX}/${LATEST_RUN_ID}-pdp.png \
+              ${{ env.OUTPUT_DIR }}/${LATEST_RUN_ID}-pdp.png
+            echo "✅ Downloaded PDP plot"
+          fi
+          
+          # 4. Metadata
+          if gsutil ls gs://${BUCKET_NAME}/${GCS_PREFIX}/${LATEST_RUN_ID}-metadata.json 2>/dev/null; then
+            gsutil cp gs://${BUCKET_NAME}/${GCS_PREFIX}/${LATEST_RUN_ID}-metadata.json \
+              ${{ env.OUTPUT_DIR }}/${LATEST_RUN_ID}-metadata.json
+            echo "✅ Downloaded metadata"
+          fi
+          
+          echo "Successfully downloaded all available outputs for run $LATEST_RUN_ID"
+
+      - name: Commit and Push New Files
+        if: steps.download.outputs.found == 'true'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          RUN_ID="${{ steps.download.outputs.run_id }}"
+          
+          # Stage all new files
+          git add ${{ env.OUTPUT_DIR }}/${RUN_ID}-*
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No new files to commit"
+            exit 0
+          fi
+          
+          # Commit the new files
+          git commit -m "🤖 Enhanced Model Outputs: Run $RUN_ID (Random Forest + preds + importance + PDP)"
+          
+          # Pull and rebase
+          git pull --rebase origin main || true
+          
+          # Push changes
+          git push
