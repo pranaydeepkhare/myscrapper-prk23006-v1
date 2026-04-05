@@ -6,7 +6,6 @@
 # 3. Uses ALL 10 features including the 4 new ones (color, city, state, zip_code)
 # 4. Generates interpretability outputs:
 #    - Permutation importance (all features)
-#    - Partial Dependence Plots (top 3 features)
 # 5. Saves predictions + interpretability to GCS
 
 import os
@@ -26,10 +25,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
-from sklearn.inspection import permutation_importance, PartialDependenceDisplay
-import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for GCS
-import matplotlib.pyplot as plt
+from sklearn.inspection import permutation_importance
 
 # Optuna for hyperparameter tuning
 import optuna
@@ -297,62 +293,12 @@ def run_enhanced_training(dry_run: bool = False):
     
     logging.info("Top 5 features by importance:\n%s", importance_df.head().to_string())
 
-    # --- INTERPRETABILITY: PARTIAL DEPENDENCE PLOTS (TOP 3) ---
-    logging.info("Generating Partial Dependence Plots for top 3 features...")
-    top_3_features = importance_df.head(3)['feature'].tolist()
-    
-    # Get feature indices after preprocessing
-    feature_names = (
-        num_cols +  # Numeric features keep their names
-        pipe.named_steps['preprocessor']
-            .named_transformers_['cat']
-            .named_steps['oh']
-            .get_feature_names_out(cat_cols).tolist()
-    )
-    
-    # Find indices of top features
-    top_feature_indices = []
-    for feat in top_3_features:
-        if feat in num_cols:
-            top_feature_indices.append(num_cols.index(feat))
-        else:
-            # For categorical, find first occurrence in encoded features
-            matches = [i for i, fn in enumerate(feature_names) if fn.startswith(f"cat__{feat}_")]
-            if matches:
-                top_feature_indices.append(matches[0])
-    
-    # Generate PDP plot
-    fig, axes = plt.subplots(1, min(3, len(top_feature_indices)), figsize=(15, 4))
-    if len(top_feature_indices) == 1:
-        axes = [axes]
-    
-    X_val_transformed = pipe.named_steps['preprocessor'].transform(X_val)
-    
-    for idx, (feat_idx, feat_name) in enumerate(zip(top_feature_indices[:3], top_3_features[:3])):
-        PartialDependenceDisplay.from_estimator(
-            pipe.named_steps['model'],
-            X_val_transformed,
-            [feat_idx],
-            feature_names=[feat_name],
-            ax=axes[idx] if len(top_feature_indices) > 1 else axes[0]
-        )
-        axes[idx].set_title(f'PDP: {feat_name}')
-    
-    plt.tight_layout()
-    
-    # Save plot to bytes
-    pdp_buffer = io.BytesIO()
-    plt.savefig(pdp_buffer, format='png', dpi=100, bbox_inches='tight')
-    pdp_buffer.seek(0)
-    plt.close()
-
     # --- OUTPUT PATHS (HOURLY) ---
     now_utc = pd.Timestamp.utcnow().tz_convert("UTC")
     run_timestamp = now_utc.strftime('%Y%m%d%H')
     
     preds_key = f"{OUTPUT_PREFIX}/{run_timestamp}-preds.csv"
     importance_key = f"{OUTPUT_PREFIX}/{run_timestamp}-importance.csv"
-    pdp_key = f"{OUTPUT_PREFIX}/{run_timestamp}-pdp.png"
     metadata_key = f"{OUTPUT_PREFIX}/{run_timestamp}-metadata.json"
 
     if not dry_run:
@@ -364,10 +310,6 @@ def run_enhanced_training(dry_run: bool = False):
         # Write importance
         _write_csv_to_gcs(client, GCS_BUCKET, importance_key, importance_df)
         logging.info("Wrote importance to gs://%s/%s", GCS_BUCKET, importance_key)
-        
-        # Write PDP plot
-        _write_bytes_to_gcs(client, GCS_BUCKET, pdp_key, pdp_buffer.getvalue(), "image/png")
-        logging.info("Wrote PDP plot to gs://%s/%s", GCS_BUCKET, pdp_key)
         
         # Write metadata
         metadata = {
@@ -381,7 +323,7 @@ def run_enhanced_training(dry_run: bool = False):
             "val_rows": len(val_df),
             "test_rows": len(test_df),
             "test_metrics": test_metrics,
-            "top_3_features": top_3_features
+            "top_5_features": importance_df.head(5)['feature'].tolist()
         }
         _write_bytes_to_gcs(
             client, GCS_BUCKET, metadata_key, 
@@ -403,11 +345,10 @@ def run_enhanced_training(dry_run: bool = False):
         "test_metrics": test_metrics,
         "features_used": feats,
         "n_features": len(feats),
-        "top_3_features": top_3_features,
+        "top_5_features": importance_df.head(5)['feature'].tolist(),
         "outputs": {
             "predictions": preds_key,
             "importance": importance_key,
-            "pdp": pdp_key,
             "metadata": metadata_key
         },
         "dry_run": dry_run,
